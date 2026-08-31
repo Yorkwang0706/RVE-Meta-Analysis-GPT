@@ -1,0 +1,1185 @@
+---
+title: "Untitled"
+author: "York Wang"
+date: "2026-04-20"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  dpi = 300,
+  fig.width = 7,
+  fig.height = 4,
+  out.width = "100%"
+)
+```
+
+```{r}
+library(robumeta)
+library(readxl)
+library(dplyr)
+```
+
+```{r}
+dat <- read_excel("/Users/wangenyou/Desktop/EFR 590 Meta/Metaofai7.xlsx")
+library(robumeta)
+
+# Factor
+dat$Source <- factor(dat$Source, levels = c("AI", "Human"))
+dat$Type   <- factor(dat$Type, levels = c("3", "4"))
+
+# Accuracy → proportion
+dat$p <- dat$Accuracy / 100
+
+# 避免 0 / 1
+dat$p_adj <- ifelse(dat$p == 0, 0.5 / dat$Sample,
+             ifelse(dat$p == 1, (dat$Sample - 0.5) / dat$Sample, dat$p))
+
+# Logit effect size
+dat$yi <- qlogis(dat$p_adj)
+
+# Variance
+dat$Correct <- round(dat$p_adj * dat$Sample)
+dat$vi <- 1 / dat$Correct + 1 / (dat$Sample - dat$Correct)
+```
+
+```{r}
+res_source <- robu(
+  yi ~ Source,
+  data = dat,
+  studynum = StudyID,
+  var.eff.size = vi,
+  modelweights = "CORR",
+  rho = 0.8,
+  small = TRUE
+)
+
+print(res_source)
+```
+
+```{r}
+dat_ai <- subset(dat, Source == "AI")
+dat_ai$Type <- droplevels(dat_ai$Type)
+
+res_type <- robu(
+  yi ~ Type,
+  data = dat_ai,
+  studynum = StudyID,
+  var.eff.size = vi,
+  modelweights = "CORR",
+  rho = 0.8,
+  small = TRUE
+)
+
+print(res_type)
+```
+
+```{r}
+dat_ai <- subset(dat, Source == "AI")
+dat_ai$Type <- droplevels(dat_ai$Type)
+
+res_type <- robu(
+  yi ~ Genre,
+  data = dat_ai,
+  studynum = StudyID,
+  var.eff.size = vi,
+  modelweights = "CORR",
+  rho = 0.8,
+  small = TRUE
+)
+
+print(res_type)
+```
+
+```{r}
+rho_values <- c(0.2, 0.5, 1.0)
+
+res_source_sens <- lapply(rho_values, function(r) {
+  robu(
+    yi ~ Source,
+    data = dat,
+    studynum = StudyID,
+    var.eff.size = vi,
+    modelweights = "CORR",
+    rho = r,
+    small = TRUE
+  )
+})
+
+res_source_sens
+```
+
+```{r}
+res_type_sens <- lapply(rho_values, function(r) {
+  robu(
+    yi ~ Type,
+    data = dat_ai,
+    studynum = StudyID,
+    var.eff.size = vi,
+    modelweights = "CORR",
+    rho = r,
+    small = TRUE
+  )
+})
+
+res_type_sens
+```
+
+```{r}
+res_type_sens <- lapply(rho_values, function(r) {
+  robu(
+    yi ~ Genre,
+    data = dat_ai,
+    studynum = StudyID,
+    var.eff.size = vi,
+    modelweights = "CORR",
+    rho = r,
+    small = TRUE
+  )
+})
+
+res_type_sens
+```
+
+```{r}
+# -------------------------
+# 3. Leave-one-out sensitivity: Model 1
+# Source effect, all data
+# -------------------------
+
+studies <- unique(dat$StudyID)
+
+loo_source <- lapply(studies, function(s) {
+  temp <- subset(dat, StudyID != s)
+  
+  fit <- robu(
+    yi ~ Source,
+    data = temp,
+    studynum = StudyID,
+    var.eff.size = vi,
+    modelweights = "CORR",
+    rho = 0.8,
+    small = TRUE
+  )
+  
+  data.frame(
+    removed_study = s,
+    beta_SourceHuman = fit$reg_table$b.r[fit$reg_table$labels == "SourceHuman"],
+    SE = fit$reg_table$SE[fit$reg_table$labels == "SourceHuman"],
+    p = fit$reg_table$prob[fit$reg_table$labels == "SourceHuman"],
+    CI_L = fit$reg_table$CI.L[fit$reg_table$labels == "SourceHuman"],
+    CI_U = fit$reg_table$CI.U[fit$reg_table$labels == "SourceHuman"]
+  )
+})
+
+loo_source <- do.call(rbind, loo_source)
+print(loo_source)
+```
+
+```{r}
+# -------------------------
+# 4. Leave-one-out sensitivity: Model 2
+# Type effect, AI-only
+# -------------------------
+
+studies_ai <- unique(dat_ai$StudyID)
+
+loo_type <- lapply(studies_ai, function(s) {
+  temp <- subset(dat_ai, StudyID != s)
+  
+  fit <- robu(
+    yi ~ Type,
+    data = temp,
+    studynum = StudyID,
+    var.eff.size = vi,
+    modelweights = "CORR",
+    rho = 0.8,
+    small = TRUE
+  )
+  
+  data.frame(
+    removed_study = s,
+    beta_Type4 = fit$reg_table$b.r[fit$reg_table$labels == "Type4"],
+    SE = fit$reg_table$SE[fit$reg_table$labels == "Type4"],
+    p = fit$reg_table$prob[fit$reg_table$labels == "Type4"],
+    CI_L = fit$reg_table$CI.L[fit$reg_table$labels == "Type4"],
+    CI_U = fit$reg_table$CI.U[fit$reg_table$labels == "Type4"]
+  )
+})
+
+loo_type <- do.call(rbind, loo_type)
+print(loo_type)
+```
+
+```{r}
+# ---------------------------------
+# 0. 準備資料（Genre 設定）
+# ---------------------------------
+dat_ai$Genre <- factor(dat_ai$Genre)
+dat_ai$Genre <- relevel(dat_ai$Genre, ref = "Classroom")  # baseline
+
+# ---------------------------------
+# 1. Leave-one-out setup
+# ---------------------------------
+studies_ai <- unique(dat_ai$StudyID)
+
+loo_genre <- lapply(studies_ai, function(s) {
+  
+  temp <- subset(dat_ai, StudyID != s)
+  
+  # ---------------------------------
+  # 2. RVE meta-regression
+  # ---------------------------------
+  fit <- robu(
+    yi ~ Genre,
+    data = temp,
+    studynum = StudyID,
+    var.eff.size = vi,
+    modelweights = "CORR",
+    rho = 0.8,
+    small = TRUE
+  )
+  
+  # ---------------------------------
+  # 3. 抓係數（兩個 moderator）
+  # ---------------------------------
+  coef_table <- fit$reg_table
+  
+  # 安全抓值（避免某些 LOO 沒出現某 level）
+  get_val <- function(label, col) {
+    if (label %in% coef_table$labels) {
+      return(coef_table[[col]][coef_table$labels == label])
+    } else {
+      return(NA)
+    }
+  }
+  
+  data.frame(
+    removed_study = s,
+    
+    # --- Journal vs Classroom ---
+    beta_Journal = get_val("GenreJournal", "b.r"),
+    SE_Journal   = get_val("GenreJournal", "SE"),
+    p_Journal    = get_val("GenreJournal", "prob"),
+    CI_L_Journal = get_val("GenreJournal", "CI.L"),
+    CI_U_Journal = get_val("GenreJournal", "CI.U"),
+    
+    # --- Recommendation vs Classroom ---
+    beta_Rec = get_val("GenreRecommendation", "b.r"),
+    SE_Rec   = get_val("GenreRecommendation", "SE"),
+    p_Rec    = get_val("GenreRecommendation", "prob"),
+    CI_L_Rec = get_val("GenreRecommendation", "CI.L"),
+    CI_U_Rec = get_val("GenreRecommendation", "CI.U")
+  )
+})
+
+# ---------------------------------
+# 4. 合併結果
+# ---------------------------------
+loo_genre <- do.call(rbind, loo_genre)
+
+print(loo_genre)
+```
+
+```{r}
+library(metafor)
+
+res_bias <- rma(yi, vi, data = dat, method = "REML")
+
+# Funnel plot
+funnel(res_bias)
+
+# Egger's test
+k <- res_bias$k
+n_studies <- length(unique(dat$StudyID))
+egger <- regtest(res_bias, model = "rma")
+
+cat("Egger's test (k =", k, "effect sizes, studies =", n_studies, 
+    "): z =", round(egger$zval, 3),
+    ", p =", round(egger$pval, 3), "\n")
+```
+
+```{r}
+library(metafor)
+
+# Study-level aggregation
+dat_agg <- aggregate(
+  cbind(yi, vi) ~ StudyID,
+  data = dat,
+  FUN = mean
+)
+
+# Random-effects model
+res_bias_agg <- rma(
+  yi = yi,
+  vi = vi,
+  data = dat_agg,
+  method = "REML"
+)
+
+# Funnel plot
+funnel(res_bias_agg)
+
+# Egger's test
+k <- res_bias_agg$k
+egger <- regtest(res_bias_agg, model = "rma")
+
+cat("Study-level Egger's test (k =", k, "studies): z =",
+    round(egger$zval, 3),
+    ", p =", round(egger$pval, 3), "\n")
+```
+
+```{r}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+# weighted mean function
+w_mean <- function(x, w) sum(x * w) / sum(w)
+
+# 分組計算
+summary_table <- dat %>%
+  group_by(Type, Source) %>%
+  summarise(
+    Accuracy = w_mean(p_adj, Sample),
+    N = sum(Sample),
+    .groups = "drop"
+  ) %>%
+  arrange(Type, Source)
+
+Summary_table <- summary_table %>%
+  mutate(
+    SE = sqrt(Accuracy * (1 - Accuracy) / N),
+    CI_low = Accuracy - 1.96 * SE,
+    CI_high = Accuracy + 1.96 * SE
+  ) %>%
+  mutate(
+    CI_low = pmax(CI_low, 0),
+    CI_high = pmin(CI_high, 1)
+  )
+
+summary_table
+```
+
+```{r}
+library(dplyr)
+
+w_mean <- function(x, w) sum(x * w) / sum(w)
+
+final_table <- dat %>%
+  group_by(Type, Source) %>%
+  summarise(
+    Accuracy = w_mean(p_adj, Sample),
+    N = sum(Sample),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    SE = sqrt(Accuracy * (1 - Accuracy) / N),
+    CI_low = pmax(Accuracy - 1.96 * SE, 0),
+    CI_high = pmin(Accuracy + 1.96 * SE, 1),
+    Accuracy = round(Accuracy, 3),
+    CI_low = round(CI_low, 3),
+    CI_high = round(CI_high, 3)
+  ) %>%
+  arrange(Type, Source)
+
+final_table
+```
+
+```{r}
+compute_sdt <- function(df){
+
+  p_AI    <- df$Accuracy[df$Source == "AI"]
+  p_Human <- df$Accuracy[df$Source == "Human"]
+
+  H  <- p_AI
+  FA <- 1 - p_Human
+
+  # 避免 0/1
+  H  <- pmin(pmax(H, 0.001), 0.999)
+  FA <- pmin(pmax(FA, 0.001), 0.999)
+
+  zH  <- qnorm(H)
+  zFA <- qnorm(FA)
+
+  d_prime <- zH - zFA
+  c_bias  <- -0.5 * (zH + zFA)
+
+  data.frame(
+    Hit = H,
+    False_Alarm = FA,
+    d_prime = d_prime,
+    c = c_bias
+  )
+}
+
+# 分 GPT3 / GPT4 算
+sdt_3 <- compute_sdt(filter(summary_table, Type == "3"))
+sdt_4 <- compute_sdt(filter(summary_table, Type == "4"))
+
+sdt_3$Type <- "3"
+sdt_4$Type <- "4"
+
+sdt_table <- bind_rows(sdt_3, sdt_4) %>%
+  select(Type, Hit, False_Alarm, d_prime, c)
+
+sdt_table
+```
+
+```{r}
+dat_all <- read_excel("/Users/wangenyou/Desktop/EFR 590 Meta/Metaofai7.xlsx") %>%
+  mutate(
+    Source  = factor(Source),
+    Type    = factor(Type),
+    p       = Accuracy / 100,
+    Correct = round(Sample * p),
+    yi      = qlogis(p),
+    vi      = 1 / Correct + 1 / (Sample - Correct),
+    label   = Studyname
+  )
+
+# -------------------------
+# Human
+# -------------------------
+dat_human <- dat_all %>%
+  filter(Source == "Human") %>%
+  arrange(desc(label == "Ágústsdóttir et al. (2025)"), label)
+
+# -------------------------
+# AI
+# -------------------------
+dat_ai <- dat_all %>%
+  filter(Source == "AI") %>%
+  arrange(desc(label == "Ágústsdóttir et al. (2025)"), label)
+```
+
+```{r}
+make_forest_plot <- function(dat_sub, main_title) {
+  
+  n <- nrow(dat_sub)
+  rows <- n:1
+  
+  # observed proportion and 95% CI
+  est <- transf.ilogit(dat_sub$yi)
+  lb  <- transf.ilogit(dat_sub$yi - 1.96 * sqrt(dat_sub$vi))
+  ub  <- transf.ilogit(dat_sub$yi + 1.96 * sqrt(dat_sub$vi))
+  
+  # 右側顯示文字
+  acc_text <- sprintf("%.1f%% [%.1f%%, %.1f%%]",
+                      est * 100,
+                      lb * 100,
+                      ub * 100)
+  
+  par(mar = c(5, 6, 3, 6), cex = 0.9)
+  par(xpd = NA)
+  
+  forest(
+    x = dat_sub$yi,
+    vi = dat_sub$vi,
+    transf = transf.ilogit,
+    slab = NA,
+    rows = rows,
+    xlim = c(-1.7, 1.7),
+    alim = c(0, 1),
+    at = seq(0, 1, 0.2),
+    refline = 0.5,
+    psize = 1.1,
+    cex = 0.8,
+    col = "black",
+    annotate = FALSE,
+    header = FALSE,
+    xlab = "Accuracy (%)",
+    main = "",
+    xaxt = "n"
+    )
+  
+  axis(
+    side = 1,
+    at = seq(0, 1, 0.2),
+    labels = paste0(seq(0, 100, 20), "%")
+    )
+  
+  text(
+    x = 0.3,
+    y = n + 3,
+    labels = main_title,
+    cex = 1.2,
+    font = 2
+   )
+  
+  # 左側標題
+  text(
+    x = -1.20,
+    y = n + 2.0,
+    labels = "Study Name",
+    pos = 4,
+    font = 2,
+    cex = 0.8,
+    col = "black"
+  )
+  
+  # 左側研究名稱
+  text(
+    x = -1.20,
+    y = rows,
+    labels = dat_sub$label,
+    pos = 4,
+    cex = 0.8,
+    col = "black"
+  )
+  
+  # 右側標題
+  text(
+    x = 1.02,
+    y = n + 2.0,
+    labels = "Accuracy [95% CI]",
+    pos = 4,
+    font = 2,
+    cex = 0.8,
+    col = "black"
+  )
+  
+  # 右側數值
+  text(
+    x = 1.02,
+    y = rows,
+    labels = acc_text,
+    pos = 4,
+    cex = 0.8,
+    col = "black"
+  )
+}
+make_forest_plot(dat_ai, "ChatGPT-generated")
+make_forest_plot(dat_human, "Human-written")
+```
+
+```{r}
+# 第一次使用才需要
+# install.packages(c("tidyverse", "patchwork", "scales"))
+
+library(tidyverse)
+library(patchwork)
+library(scales)
+
+dat_plot <- dat %>%
+  mutate(
+    Version = recode(
+      as.character(Type),
+      "3" = "GPT-3.5",
+      "4" = "GPT-4"
+    ),
+    Version = factor(Version, levels = c("GPT-3.5", "GPT-4")),
+    Source = factor(Source, levels = c("AI", "Human"))
+  )
+```
+
+```{r}
+study_accuracy <- dat_plot %>%
+  group_by(StudyID, Version, Source) %>%
+  summarise(
+    Accuracy = weighted.mean(
+      p,
+      Sample,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+ggplot(
+  study_accuracy,
+  aes(
+    x = Source,
+    y = Accuracy * 100,
+    group = interaction(StudyID, Version)
+  )
+) +
+  
+  geom_line(
+    color = "grey75",
+    linewidth = 0.7
+  ) +
+  
+  geom_point(
+    aes(color = Source),
+    size = 3,
+    alpha = 0.8
+  ) +
+  
+  facet_wrap(~Version) +
+  
+  geom_hline(
+    yintercept = 50,
+    linetype = "dotted",
+    color = "grey50"
+  ) +
+  
+  scale_color_manual(
+    values = c(
+      "AI" = "#E69F00",
+      "Human" = "#56B4E9"
+    )
+  ) +
+  
+  coord_cartesian(
+    ylim = c(0, 100)
+  ) +
+  
+  labs(
+    title = "Classification Accuracy by Text Source",
+    x = "Text Source",
+    y = "Accuracy (%)",
+    color = "Text Source"
+  ) +
+  
+  theme_classic(base_size = 16) +
+  
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(
+      size = 17,
+      face = "bold"
+    )
+  )
+```
+
+```{r}
+library(tidyverse)
+
+# =========================
+# 1. 整理資料
+# =========================
+
+dat_base <- dat %>%
+  mutate(
+    Type = as.character(Type),
+    p = Accuracy / 100
+  )
+
+# 找出沒有標記版本的共用 Human baseline
+shared_human <- dat_base %>%
+  filter(
+    Source == "Human",
+    is.na(Type)
+  )
+
+# 僅為繪圖用途，將共用 baseline 放入兩個版本
+shared_human_versions <- bind_rows(
+  shared_human %>% mutate(Type = "3"),
+  shared_human %>% mutate(Type = "4")
+)
+
+dat_plot <- dat_base %>%
+  filter(!is.na(Type)) %>%
+  bind_rows(shared_human_versions) %>%
+  mutate(
+    Version = case_when(
+      Type == "3" ~ "GPT-3.5",
+      Type == "4" ~ "GPT-4"
+    ),
+    Version = factor(
+      Version,
+      levels = c("GPT-3.5", "GPT-4")
+    ),
+    Source = factor(
+      Source,
+      levels = c("AI", "Human")
+    )
+  ) %>%
+  filter(!is.na(Version))
+```
+
+```{r}
+library(tidyverse)
+
+# =========================
+# 1. Study-level data
+# =========================
+
+study_accuracy <- dat_plot %>%
+  group_by(StudyID, Version, Source) %>%
+  summarise(
+    Accuracy = weighted.mean(
+      Accuracy,
+      Sample,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+# =========================
+# 2. Pooled estimates + 95% CI
+# =========================
+
+pooled_accuracy <- dat_plot %>%
+  group_by(Version, Source) %>%
+  summarise(
+    total_n = sum(Sample, na.rm = TRUE),
+    correct = sum((Accuracy / 100) * Sample, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    estimate = correct / total_n,
+
+    logit_est = qlogis(estimate),
+
+    se = sqrt(
+      1 / correct +
+      1 / (total_n - correct)
+    ),
+
+    lower = plogis(logit_est - 1.96 * se),
+    upper = plogis(logit_est + 1.96 * se),
+
+    Estimate = estimate * 100,
+    Lower = lower * 100,
+    Upper = upper * 100
+  )
+
+pooled_accuracy
+```
+
+```{r}
+p_accuracy <- ggplot(
+  study_accuracy,
+  aes(
+    x = Source,
+    y = Accuracy,
+    group = interaction(StudyID, Version)
+  )
+) +
+
+  # Study-level paired lines
+  geom_line(
+    color = "grey75",
+    linewidth = 0.6,
+    alpha = 0.7
+  ) +
+
+  # Study-level points
+  geom_point(
+    aes(color = Source),
+    size = 2.8,
+    alpha = 0.65,
+    position = position_jitter(
+      width = 0.04,
+      height = 0
+    )
+  ) +
+
+  # Chance level
+  geom_hline(
+    yintercept = 50,
+    linetype = "dotted",
+    linewidth = 0.8,
+    color = "grey45"
+  ) +
+
+  # Pooled estimate — FIXED CENTER
+  geom_point(
+    data = pooled_accuracy,
+    aes(
+      x = Source,
+      y = Estimate
+    ),
+    inherit.aes = FALSE,
+    shape = 21,
+    fill = "black",
+    color = "black",
+    size = 5
+  ) +
+
+  facet_wrap(
+    ~Version,
+    nrow = 1
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "AI" = "#E69F00",
+      "Human" = "#56B4E9"
+    )
+  ) +
+
+  coord_cartesian(
+    ylim = c(0, 100)
+  ) +
+
+  labs(
+    title = "Classification Accuracy by Text Source",
+    subtitle = "Black points indicate sample-size-weighted pooled estimates",
+    x = "Text Source",
+    y = "Accuracy (%)",
+    color = "Text Source"
+   )  +
+
+  theme_classic(base_size = 14) +
+
+  theme(
+    legend.position = "bottom",
+
+    plot.title = element_text(
+      size = 20,
+      face = "bold"
+    ),
+
+    plot.subtitle = element_text(
+      size = 12
+    ),
+
+    strip.background = element_rect(
+      fill = "white",
+      color = "black"
+    ),
+
+    strip.text = element_text(
+      size = 16,
+      face = "bold"
+    )
+  )
+
+p_accuracy
+```
+
+```{r}
+# =========================
+# Figure 2: SDT Estimates
+# =========================
+
+sdt_plot <- tibble(
+  Version = c(
+    "GPT-3.5", "GPT-4",
+    "GPT-3.5", "GPT-4"
+  ),
+  Measure = c(
+    "Discrimination Ability (d′)",
+    "Discrimination Ability (d′)",
+    "Response Bias (c)",
+    "Response Bias (c)"
+  ),
+  Estimate = c(
+    0.48, 0.06,
+    0.24, 0.05
+  )
+)
+
+sdt_plot$Version <- factor(
+  sdt_plot$Version,
+  levels = c("GPT-3.5", "GPT-4")
+)
+```
+
+```{r}
+p_sdt <- ggplot(
+  sdt_plot,
+  aes(
+    x = Estimate,
+    y = Version
+  )
+) +
+
+  geom_vline(
+    xintercept = 0,
+    linetype = "dotted",
+    linewidth = 0.8,
+    color = "grey45"
+  ) +
+
+  geom_segment(
+    aes(
+      x = 0,
+      xend = Estimate,
+      y = Version,
+      yend = Version
+    ),
+    color = "grey65",
+    linewidth = 1
+  ) +
+
+  geom_point(
+    size = 5,
+    color = "black"
+  ) +
+
+  facet_wrap(
+    ~Measure,
+    ncol = 1,
+    scales = "free_x"
+  ) +
+
+  labs(
+    title = "Signal Detection Estimates",
+    x = "Estimate",
+    y = NULL
+  ) +
+
+  theme_classic(base_size = 15) +
+
+  theme(
+    plot.title = element_text(
+      size = 21,
+      face = "bold"
+    ),
+
+    strip.background = element_rect(
+      fill = "white",
+      color = "black"
+    ),
+
+    strip.text = element_text(
+      size = 16,
+      face = "bold"
+    ),
+
+    axis.text = element_text(
+      size = 14
+    ),
+
+    axis.title = element_text(
+      size = 15
+    )
+  )
+
+p_sdt
+```
+
+```{r}
+# =========================
+# SDT values
+# =========================
+
+sdt_values <- tibble(
+  Version = c("GPT-3.5", "GPT-4"),
+  dprime = c(0.48, 0.06),
+  criterion_c = c(0.24, 0.05)
+) %>%
+  mutate(
+    human_mean = 0,
+    ai_mean = dprime,
+
+    # criterion location on evidence axis
+    criterion = criterion_c + dprime / 2
+  )
+
+
+# =========================
+# Distribution data
+# =========================
+
+distribution_data <- sdt_values %>%
+  group_split(Version) %>%
+  map_dfr(function(x) {
+
+    evidence <- seq(
+      -3.5,
+      3.5,
+      length.out = 800
+    )
+
+    tibble(
+      Version = x$Version,
+      Evidence = evidence,
+
+      Human = dnorm(
+        evidence,
+        mean = x$human_mean,
+        sd = 1
+      ),
+
+      AI = dnorm(
+        evidence,
+        mean = x$ai_mean,
+        sd = 1
+      )
+    )
+  }) %>%
+
+  pivot_longer(
+    cols = c(AI, Human),
+    names_to = "Source",
+    values_to = "Density"
+  )
+```
+
+```{r}
+p_distribution <- ggplot(
+  distribution_data,
+  aes(
+    x = Evidence,
+    y = Density,
+    fill = Source
+  )
+) +
+
+  # =========================
+  # Distributions
+  # =========================
+
+  geom_area(
+    alpha = 0.55,
+    position = "identity"
+  ) +
+
+  # =========================
+  # Distribution means
+  # Black solid lines
+  # =========================
+
+  geom_segment(
+    data = sdt_values,
+    aes(
+      x = human_mean,
+      xend = human_mean,
+      y = 0,
+      yend = 0.39
+    ),
+    inherit.aes = FALSE,
+    linewidth = 0.7,
+    color = "black"
+  ) +
+
+  geom_segment(
+    data = sdt_values,
+    aes(
+      x = ai_mean,
+      xend = ai_mean,
+      y = 0,
+      yend = 0.39
+    ),
+    inherit.aes = FALSE,
+    linewidth = 0.7,
+    color = "black"
+  ) +
+
+  # =========================
+  # d-prime arrow
+  # =========================
+
+  geom_segment(
+    data = sdt_values,
+    aes(
+      x = human_mean,
+      xend = ai_mean,
+      y = 0.43,
+      yend = 0.43
+    ),
+    inherit.aes = FALSE,
+    arrow = arrow(
+      ends = "both",
+      type = "closed",
+      length = unit(0.10, "cm")
+    ),
+    linewidth = 0.7
+  ) +
+
+  geom_text(
+    data = sdt_values,
+    aes(
+      x = (human_mean + ai_mean) / 2,
+      y = 0.475,
+      label = paste0("d′ = ", dprime)
+    ),
+    inherit.aes = FALSE,
+    size = 4.5
+  ) +
+
+  # =========================
+  # Decision criterion
+  # Orange dashed line
+  # =========================
+
+  geom_segment(
+    data = sdt_values,
+    aes(
+      x = criterion,
+      xend = criterion,
+      y = 0,
+      yend = 0.35
+    ),
+    inherit.aes = FALSE,
+    linetype = "dashed",
+    linewidth = 0.9,
+    color = "#D55E00"
+  ) +
+
+  # Response bias label
+  geom_text(
+    data = sdt_values,
+    aes(
+      x = criterion + 0.12,
+      y = 0.32,
+      label = paste0("c = ", criterion_c)
+    ),
+    inherit.aes = FALSE,
+    size = 3.8,
+    color = "#D55E00",
+    hjust = 0
+  ) +
+
+  # =========================
+  # Facets
+  # =========================
+
+  facet_wrap(
+    ~Version,
+    nrow = 1
+  ) +
+
+  scale_fill_manual(
+    values = c(
+      "AI" = "#E69F00",
+      "Human" = "#56B4E9"
+    )
+  ) +
+
+  coord_cartesian(
+    ylim = c(0, 0.50),
+    clip = "off"
+  ) +
+
+  # =========================
+  # Labels
+  # =========================
+
+  labs(
+    title = "Theoretical Signal Detection Distributions",
+
+    subtitle = paste0(
+      "Black solid lines indicate distribution means; ",
+      "orange dashed lines indicate estimated decision criteria"
+    ),
+
+    x = "Decision Evidence (Human-like \u2190 \u2192 AI-like)",
+    y = "Density",
+    fill = "Text Source"
+  ) +
+
+  theme_classic(base_size = 15) +
+
+  theme(
+    legend.position = "bottom",
+
+    plot.title = element_text(
+      size = 21,
+      face = "bold"
+    ),
+
+    plot.subtitle = element_text(
+      size = 10
+    ),
+
+    strip.background = element_rect(
+      fill = "white",
+      color = "black"
+    ),
+
+    strip.text = element_text(
+      size = 17,
+      face = "bold"
+    )
+  )
+
+p_distribution
+```
+
